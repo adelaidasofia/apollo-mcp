@@ -1,0 +1,16 @@
+api_base: https://api.apollo.io/api/v1
+timeout_sec: 30
+daily_send_target: 50          # total daily send ceiling across all mailboxes
+monthly_credit_pool: 4000      # Apollo Pro: 4000 credits/mo
+credit_alert_pct: 0.75         # warn at 75% consumed
+
+# Human-readable labels for your sequences (sequence-ID -> display name).
+# Find IDs via apollo_sequences_list or POST /emailer_campaigns/search.
+sequence_labels:
+  "REPLACE_WITH_SEQUENCE_ID_1": "Cold Outreach v1"
+  "REPLACE_WITH_SEQUENCE_ID_2": "Nurture Campaign v2"
+
+# Human-readable labels for mailboxes (email -> display name).
+mailbox_labels:
+  "you@yourcompany.com": "Primary outreach (warmed)"
+  "you@yourdomain.com": "Secondary mailbox"
