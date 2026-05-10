@@ -132,6 +132,27 @@ Restart Claude Code after editing `.mcp.json`.
 - `scripts/daily_digest.py` — standalone script that pulls yesterday's stats and prepends them to a markdown dashboard. Run via cron or manually.
 - `scripts/bootstrap_sequences.py` — create sequences programmatically from code. Useful for version-controlling email copy. Includes the undocumented `POST /emailer_touches/{id}/approve` endpoint needed to move steps out of draft state.
 
+## Related MCPs
+
+Same author, same architecture pattern (FastMCP, draft+confirm on writes where applicable, vault auto-export, MIT):
+
+- [slack-mcp](https://github.com/adelaidasofia/slack-mcp) — multi-workspace Slack
+- [imessage-mcp](https://github.com/adelaidasofia/imessage-mcp) — macOS iMessage
+- [whatsapp-mcp](https://github.com/adelaidasofia/whatsapp-mcp) — WhatsApp via whatsmeow
+- [google-workspace-mcp](https://github.com/adelaidasofia/google-workspace-mcp) — Gmail / Calendar / Drive / Docs / Sheets
+- [substack-mcp](https://github.com/adelaidasofia/substack-mcp) — Substack writing + analytics
+- [luma-mcp](https://github.com/adelaidasofia/luma-mcp) — lu.ma events
+- [parse-mcp](https://github.com/adelaidasofia/parse-mcp) — markitdown / Docling / LlamaParse router
+- [rescuetime-mcp](https://github.com/adelaidasofia/rescuetime-mcp) — RescueTime productivity data
+- [graph-query-mcp](https://github.com/adelaidasofia/graph-query-mcp) — vault knowledge graph queries
+- [graph-autotagger-mcp](https://github.com/adelaidasofia/graph-autotagger-mcp) — wikilink suggestions from the graph
+- [investor-relations-mcp](https://github.com/adelaidasofia/investor-relations-mcp) — seed-raise pipeline tracker
+- [vault-sync-mcp](https://github.com/adelaidasofia/vault-sync-mcp) — bidirectional vault sync
+
 ## License
 
 MIT
+
+---
+
+Built by Adelaida Diaz-Roa. Full install or team version at [diazroa.com](https://diazroa.com).
