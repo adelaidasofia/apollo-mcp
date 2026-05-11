@@ -644,6 +644,341 @@ async def apollo_health() -> dict:
     return result
 
 
+# ─── Audit log helper ─────────────────────────────────────────────────────
+
+async def _write_audit_log(
+    action: str,
+    target_id: str,
+    label: Optional[str],
+    before: dict,
+    after: dict,
+    path: str,
+) -> str:
+    """Append a destructive-write entry to the audit log file at `path`.
+
+    Format: markdown entry with timestamp + before/after JSON diff. Idempotent
+    (always appends; never rewrites prior entries). If the file does not exist,
+    seeds it with a frontmatter header.
+
+    Returns a human-readable summary string for inclusion in tool responses.
+    """
+    from datetime import datetime
+
+    audit_file = Path(path)
+    audit_file.parent.mkdir(parents=True, exist_ok=True)
+
+    timestamp = datetime.now().isoformat()
+    lines = [f"## {timestamp} — {action} — {target_id}", ""]
+    if label:
+        lines += [f"**Label:** {label}", ""]
+    lines += [
+        "**Before:**",
+        "```json",
+        json.dumps(before, indent=2, ensure_ascii=False),
+        "```",
+        "",
+        "**After:**",
+        "```json",
+        json.dumps(after, indent=2, ensure_ascii=False),
+        "```",
+        "",
+        "---",
+        "",
+    ]
+    entry = "\n".join(lines)
+
+    if not audit_file.exists():
+        header = (
+            "---\n"
+            "type: audit-log\n"
+            f"creationDate: {timestamp[:10]}\n"
+            "purpose: Destructive-write audit trail for apollo-mcp. Append-only.\n"
+            "---\n\n"
+            "# Apollo MCP Audit Log\n\n"
+            "Every destructive write through apollo-mcp lands here. Use the before/after diffs to reverse breakage.\n\n"
+            "---\n\n"
+        )
+        audit_file.write_text(header + entry, encoding="utf-8")
+    else:
+        with open(audit_file, "a", encoding="utf-8") as f:
+            f.write(entry)
+
+    return f"appended to {path}"
+
+
+def _html_from_text(body_text: str) -> str:
+    """Wrap a plain-text body in minimal HTML matching Apollo's template style."""
+    paragraphs = [p.strip() for p in body_text.split("\n\n") if p.strip()]
+    return (
+        "<html><head></head><body>"
+        + "".join(f"<p>{p.replace(chr(10), '<br>')}</p>" for p in paragraphs)
+        + "</body></html>"
+    )
+
+
+# ─── Template management (destructive writes) ─────────────────────────────
+
+@mcp.tool
+async def apollo_template_get(template_id: str) -> dict:
+    """Get an emailer template by ID. Use to audit current state before update.
+
+    Args:
+        template_id: The emailer_template ID (NOT the step or touch ID).
+    """
+    return await _request("GET", f"/emailer_templates/{template_id}")
+
+
+@mcp.tool
+async def apollo_template_update(
+    template_id: str,
+    subject: Optional[str] = None,
+    body_text: Optional[str] = None,
+    body_html: Optional[str] = None,
+    audit_label: Optional[str] = None,
+) -> dict:
+    """Update an emailer template subject and/or body. Destructive write.
+
+    Snapshots the current template to APOLLO_AUDIT_LOG_PATH (if set) BEFORE the
+    update, so any breakage is reversible from the audit log diff.
+
+    Args:
+        template_id: The emailer_template ID.
+        subject: New subject line. Leave None to keep current.
+        body_text: New plain-text body. Leave None to keep current.
+        body_html: New HTML body. Auto-generated from body_text if None and
+            body_text is provided.
+        audit_label: Optional human label for the audit log entry.
+    """
+    pre = await _request("GET", f"/emailer_templates/{template_id}")
+    if "error" in pre:
+        return {"error": "Pre-update snapshot failed", "detail": pre}
+    pre_t = pre.get("emailer_template") or pre
+
+    update_fields: dict = {}
+    if subject is not None:
+        update_fields["subject"] = subject
+    if body_text is not None:
+        update_fields["body_text"] = body_text
+        if body_html is None:
+            body_html = _html_from_text(body_text)
+    if body_html is not None:
+        update_fields["body_html"] = body_html
+
+    if not update_fields:
+        return {"error": "No fields provided. Pass subject, body_text, or body_html."}
+
+    audit_path = os.environ.get("APOLLO_AUDIT_LOG_PATH", "").strip()
+    audit_log_entry = None
+    if audit_path:
+        try:
+            audit_log_entry = await _write_audit_log(
+                action="template_update",
+                target_id=template_id,
+                label=audit_label,
+                before={
+                    "subject": pre_t.get("subject"),
+                    "body_text": pre_t.get("body_text"),
+                },
+                after=update_fields,
+                path=audit_path,
+            )
+        except Exception as e:
+            audit_log_entry = f"audit_log_write_failed: {type(e).__name__}: {e}"
+
+    result = await _request(
+        "PUT",
+        f"/emailer_templates/{template_id}",
+        body={"emailer_template": update_fields},
+    )
+    if "error" in result:
+        return {
+            "error": "Update failed",
+            "detail": result,
+            "audit_log_entry": audit_log_entry,
+        }
+
+    return {
+        "updated": True,
+        "template_id": template_id,
+        "fields_updated": list(update_fields.keys()),
+        "template": result.get("emailer_template") or result,
+        "audit_log_entry": audit_log_entry,
+    }
+
+
+# ─── Sequence + step creation (destructive writes) ────────────────────────
+
+@mcp.tool
+async def apollo_sequence_create(
+    name: str,
+    label: Optional[str] = None,
+    permissions: str = "team_can_use",
+    active: bool = False,
+) -> dict:
+    """Create a new email sequence (emailer_campaign). Starts PAUSED by default.
+
+    Use apollo_step_create to add steps. Use apollo_sequence_set_active(True)
+    to launch when ready.
+
+    Args:
+        name: Sequence name shown in Apollo UI.
+        label: Optional cross-reference label (echoed in response only).
+        permissions: "team_can_use" | "private" | "team_can_view_and_edit".
+        active: Start active. Default False so steps can be built first.
+    """
+    body = {
+        "emailer_campaign": {
+            "name": name,
+            "permissions": permissions,
+            "active": active,
+        }
+    }
+    result = await _request("POST", "/emailer_campaigns", body=body)
+    if "error" in result:
+        return result
+
+    seq = result.get("emailer_campaign") or result
+    return {
+        "created": True,
+        "sequence_id": seq.get("id"),
+        "name": seq.get("name"),
+        "active": seq.get("active"),
+        "label": label,
+        "sequence": seq,
+    }
+
+
+@mcp.tool
+async def apollo_step_create(
+    sequence_id: str,
+    position: int,
+    wait_days: int,
+    subject: str,
+    body_text: str,
+    body_html: Optional[str] = None,
+    step_type: str = "auto_email",
+    include_signature: bool = True,
+) -> dict:
+    """Create a sequence step plus its initial touch and template in one call.
+
+    Args:
+        sequence_id: The emailer_campaign ID.
+        position: 1-based position in the sequence.
+        wait_days: Days to wait BEFORE this step fires (position 1 typically 0).
+        subject: Email subject line.
+        body_text: Plain-text body.
+        body_html: Optional HTML body. Auto-generated from body_text if None.
+        step_type: "auto_email" (default) or "manual_email".
+        include_signature: Append the user's saved signature.
+    """
+    step_body = {
+        "emailer_step": {
+            "emailer_campaign_id": sequence_id,
+            "position": position,
+            "wait_time": wait_days,
+            "wait_mode": "day",
+            "type": step_type,
+        }
+    }
+    step_result = await _request("POST", "/emailer_steps", body=step_body)
+    if "error" in step_result:
+        return {"error": "Step create failed", "detail": step_result}
+    step = step_result.get("emailer_step") or step_result
+    step_id = step.get("id")
+
+    if body_html is None:
+        body_html = _html_from_text(body_text)
+
+    touch_body = {
+        "emailer_touch": {
+            "emailer_step_id": step_id,
+            "type": "new_thread",
+            "include_signature": include_signature,
+            "emailer_template_attributes": {
+                "subject": subject,
+                "body_text": body_text,
+                "body_html": body_html,
+            },
+            "status": "approved",
+        }
+    }
+    touch_result = await _request("POST", "/emailer_touches", body=touch_body)
+    if "error" in touch_result:
+        return {
+            "error": "Touch create failed (step was created)",
+            "step_id": step_id,
+            "detail": touch_result,
+        }
+    touch = touch_result.get("emailer_touch") or touch_result
+    return {
+        "created": True,
+        "step_id": step_id,
+        "touch_id": touch.get("id"),
+        "template_id": touch.get("emailer_template_id"),
+        "position": position,
+        "wait_days": wait_days,
+        "subject": subject,
+    }
+
+
+# ─── Mailbox cap update (destructive write) ───────────────────────────────
+
+@mcp.tool
+async def apollo_mailbox_update_cap(
+    mailbox_id: str,
+    daily_send_limit: int,
+    audit_label: Optional[str] = None,
+) -> dict:
+    """Update the daily send cap on a mailbox.
+
+    Apollo's daily_send_limit gates how many emails a mailbox sends per day.
+    Increase only when warmup status is healthy and deliverability supports it.
+
+    Args:
+        mailbox_id: The email_account ID (NOT the email address).
+        daily_send_limit: New cap (per-day integer).
+        audit_label: Optional human label for the audit log.
+    """
+    pre = await _request("GET", f"/email_accounts/{mailbox_id}")
+    pre_account = pre.get("email_account") or pre
+    pre_cap = pre_account.get("daily_send_limit") or pre_account.get("daily_limit")
+
+    audit_path = os.environ.get("APOLLO_AUDIT_LOG_PATH", "").strip()
+    audit_log_entry = None
+    if audit_path:
+        try:
+            audit_log_entry = await _write_audit_log(
+                action="mailbox_update_cap",
+                target_id=mailbox_id,
+                label=audit_label,
+                before={"daily_send_limit": pre_cap},
+                after={"daily_send_limit": daily_send_limit},
+                path=audit_path,
+            )
+        except Exception as e:
+            audit_log_entry = f"audit_log_write_failed: {type(e).__name__}: {e}"
+
+    result = await _request(
+        "PUT",
+        f"/email_accounts/{mailbox_id}",
+        body={"email_account": {"daily_send_limit": daily_send_limit}},
+    )
+    if "error" in result:
+        return {
+            "error": "Cap update failed",
+            "detail": result,
+            "audit_log_entry": audit_log_entry,
+        }
+    new_account = result.get("email_account") or result
+    return {
+        "updated": True,
+        "mailbox_id": mailbox_id,
+        "old_cap": pre_cap,
+        "new_cap": new_account.get("daily_send_limit") or daily_send_limit,
+        "audit_log_entry": audit_log_entry,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
