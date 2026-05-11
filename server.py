@@ -437,14 +437,18 @@ async def apollo_people_search(
     per_page: int = 25,
     page: int = 1,
 ) -> dict:
-    """Search Apollo people database. Does NOT burn credits (search is free; reveal costs)."""
+    """Search Apollo people database. Does NOT burn credits (search is free; reveal costs).
+
+    Uses /mixed_people/api_search (Apollo deprecated /mixed_people/search for
+    API callers in 2026 with HTTP 422). Verified 2026-05-11.
+    """
     body: dict = {"page": page, "per_page": per_page}
     if q_keywords: body["q_keywords"] = q_keywords
     if person_titles: body["person_titles"] = person_titles
     if person_seniorities: body["person_seniorities"] = person_seniorities
     if person_locations: body["person_locations"] = person_locations
     if organization_domains: body["q_organization_domains_list"] = organization_domains
-    return await _request("POST", "/mixed_people/search", body=body)
+    return await _request("POST", "/mixed_people/api_search", body=body)
 
 
 @mcp.tool
