@@ -785,10 +785,13 @@ async def apollo_template_update(
         except Exception as e:
             audit_log_entry = f"audit_log_write_failed: {type(e).__name__}: {e}"
 
+    # Apollo's template-update endpoint is PATCH + flat body. PUT + nested wrap
+    # returns 200 OK but silently no-ops (the same antipattern as the
+    # /emailer_campaigns remove_contact_ids endpoint). Verified 2026-05-11.
     result = await _request(
-        "PUT",
+        "PATCH",
         f"/emailer_templates/{template_id}",
-        body={"emailer_template": update_fields},
+        body=update_fields,
     )
     if "error" in result:
         return {
@@ -797,11 +800,22 @@ async def apollo_template_update(
             "audit_log_entry": audit_log_entry,
         }
 
+    # Post-write verify: re-fetch and confirm the subject/body actually changed.
+    # Apollo can still 200-no-op on malformed bodies, so we trust GET not the PUT response.
+    verify = await _request("GET", f"/emailer_templates/{template_id}")
+    verified_t = verify.get("emailer_template") or {}
+    write_landed = True
+    if subject is not None and verified_t.get("subject") != subject:
+        write_landed = False
+    if body_text is not None and verified_t.get("body_text") != body_text:
+        write_landed = False
+
     return {
-        "updated": True,
+        "updated": write_landed,
+        "silent_no_op": not write_landed,
         "template_id": template_id,
         "fields_updated": list(update_fields.keys()),
-        "template": result.get("emailer_template") or result,
+        "verified_subject": verified_t.get("subject"),
         "audit_log_entry": audit_log_entry,
     }
 
@@ -826,12 +840,11 @@ async def apollo_sequence_create(
         permissions: "team_can_use" | "private" | "team_can_view_and_edit".
         active: Start active. Default False so steps can be built first.
     """
+    # Apollo's POST /emailer_campaigns wants flat body (not nested wrap).
     body = {
-        "emailer_campaign": {
-            "name": name,
-            "permissions": permissions,
-            "active": active,
-        }
+        "name": name,
+        "permissions": permissions,
+        "active": active,
     }
     result = await _request("POST", "/emailer_campaigns", body=body)
     if "error" in result:
@@ -871,53 +884,65 @@ async def apollo_step_create(
         step_type: "auto_email" (default) or "manual_email".
         include_signature: Append the user's saved signature.
     """
+    # Apollo wants flat bodies on these endpoints (nested wrap silently no-ops).
+    # POST /emailer_steps returns BOTH emailer_step AND emailer_touch with auto-
+    # created template — we just need to PATCH the template body afterwards.
     step_body = {
-        "emailer_step": {
-            "emailer_campaign_id": sequence_id,
-            "position": position,
-            "wait_time": wait_days,
-            "wait_mode": "day",
-            "type": step_type,
-        }
+        "emailer_campaign_id": sequence_id,
+        "position": position,
+        "wait_time": wait_days,
+        "wait_mode": "day",
+        "type": step_type,
     }
     step_result = await _request("POST", "/emailer_steps", body=step_body)
     if "error" in step_result:
         return {"error": "Step create failed", "detail": step_result}
     step = step_result.get("emailer_step") or step_result
     step_id = step.get("id")
+    touch = step_result.get("emailer_touch") or {}
+    touch_id = touch.get("id")
+    template_id = touch.get("emailer_template_id")
+
+    if not template_id:
+        return {
+            "error": "Step created but no template_id returned",
+            "step_id": step_id,
+            "touch_id": touch_id,
+        }
 
     if body_html is None:
         body_html = _html_from_text(body_text)
 
-    touch_body = {
-        "emailer_touch": {
-            "emailer_step_id": step_id,
-            "type": "new_thread",
-            "include_signature": include_signature,
-            "emailer_template_attributes": {
-                "subject": subject,
-                "body_text": body_text,
-                "body_html": body_html,
-            },
-            "status": "approved",
-        }
-    }
-    touch_result = await _request("POST", "/emailer_touches", body=touch_body)
-    if "error" in touch_result:
+    # PATCH the auto-created template with the real content.
+    tpl_update = await _request(
+        "PATCH",
+        f"/emailer_templates/{template_id}",
+        body={"subject": subject, "body_text": body_text, "body_html": body_html},
+    )
+    if "error" in tpl_update:
         return {
-            "error": "Touch create failed (step was created)",
+            "error": "Template update failed (step+touch were created)",
             "step_id": step_id,
-            "detail": touch_result,
+            "touch_id": touch_id,
+            "template_id": template_id,
+            "detail": tpl_update,
         }
-    touch = touch_result.get("emailer_touch") or touch_result
+
+    # Approve the touch so the step actually fires. PATCH on the touch returns
+    # 422; this action endpoint is the only way to approve programmatically.
+    approve = await _request("POST", f"/emailer_touches/{touch_id}/approve")
+    approved = "error" not in approve
+
     return {
         "created": True,
         "step_id": step_id,
-        "touch_id": touch.get("id"),
-        "template_id": touch.get("emailer_template_id"),
+        "touch_id": touch_id,
+        "template_id": template_id,
         "position": position,
         "wait_days": wait_days,
         "subject": subject,
+        "approved": approved,
+        "approve_detail": approve if not approved else None,
     }
 
 
@@ -958,10 +983,11 @@ async def apollo_mailbox_update_cap(
         except Exception as e:
             audit_log_entry = f"audit_log_write_failed: {type(e).__name__}: {e}"
 
+    # Apollo's mailbox-update is PATCH + flat body (PUT + nested silently no-ops).
     result = await _request(
-        "PUT",
+        "PATCH",
         f"/email_accounts/{mailbox_id}",
-        body={"email_account": {"daily_send_limit": daily_send_limit}},
+        body={"daily_send_limit": daily_send_limit},
     )
     if "error" in result:
         return {
@@ -969,12 +995,19 @@ async def apollo_mailbox_update_cap(
             "detail": result,
             "audit_log_entry": audit_log_entry,
         }
-    new_account = result.get("email_account") or result
+
+    # Post-write verify
+    verify = await _request("GET", f"/email_accounts/{mailbox_id}")
+    verified_account = verify.get("email_account") or {}
+    verified_cap = verified_account.get("daily_send_limit") or verified_account.get("daily_limit")
+    write_landed = verified_cap == daily_send_limit
+
     return {
-        "updated": True,
+        "updated": write_landed,
+        "silent_no_op": not write_landed,
         "mailbox_id": mailbox_id,
         "old_cap": pre_cap,
-        "new_cap": new_account.get("daily_send_limit") or daily_send_limit,
+        "new_cap": verified_cap,
         "audit_log_entry": audit_log_entry,
     }
 
