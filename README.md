@@ -1,8 +1,8 @@
 # Apollo.io MCP Server
 
-FastMCP server exposing the full operational surface of the Apollo.io REST API to Claude Code. 22 tools covering sequences, campaign health, mailbox warmup, people/org enrichment, CRM contacts, tasks, labels, and credit tracking.
+FastMCP server exposing the full operational surface of the Apollo.io REST API to Claude Code. 27 tools covering sequences, campaign health, mailbox warmup, people/org enrichment, CRM contacts, tasks, labels, credit tracking, AND programmatic template/sequence/mailbox-cap editing with audit logging.
 
-Most existing Apollo MCPs only expose people search and enrichment. This one is built for teams running outbound at scale — daily health digests, sequence management, mailbox deliverability monitoring, and programmatic contact enrollment.
+Most existing Apollo MCPs only expose people search and enrichment. This one is built for teams running outbound at scale — daily health digests, sequence management, mailbox deliverability monitoring, programmatic contact enrollment, and end-to-end sequence authoring without touching the Apollo UI.
 
 ## Quick reference
 
@@ -12,11 +12,15 @@ apollo_messages_search days_back=1    — raw send/open/reply/bounce log
 apollo_mailbox_warmup                 — per-mailbox deliverability state
 apollo_sequences_list                 — all sequences + labels + stats
 apollo_sequence_add_contacts ...      — enroll contacts into a sequence
+apollo_template_update ...            — update template body + subject (with audit log)
+apollo_sequence_create ...            — author a new sequence end-to-end
+apollo_step_create ...                — add a step + template to a sequence
+apollo_mailbox_update_cap ...         — change daily send cap
 apollo_credits_remaining              — monthly credit budget check
 apollo_health                         — self-check (also probes master key)
 ```
 
-## Tool inventory (22)
+## Tool inventory (27)
 
 ### Campaign health
 - `apollo_campaign_health(days_back=1)` — digest across all sequences + mailboxes
@@ -52,6 +56,13 @@ apollo_health                         — self-check (also probes master key)
 - `apollo_label_create(name)`
 - `apollo_credits_remaining()`
 
+### Template + sequence authoring (destructive writes)
+- `apollo_template_get(template_id)` — fetch current template state
+- `apollo_template_update(template_id, subject?, body_text?, body_html?, audit_label?)` — update template subject + body. Snapshots current state to `APOLLO_AUDIT_LOG_PATH` (if set) BEFORE the write so any breakage is reversible from the diff
+- `apollo_sequence_create(name, label?, permissions?, active?)` — create a new sequence (paused by default)
+- `apollo_step_create(sequence_id, position, wait_days, subject, body_text, body_html?, step_type?, include_signature?)` — create a step + touch + template in one call
+- `apollo_mailbox_update_cap(mailbox_id, daily_send_limit, audit_label?)` — change daily send cap on a mailbox. Audits before/after.
+
 ### Diagnostics
 - `apollo_health()` — probes API key validity + master-key hint
 
@@ -79,6 +90,7 @@ Env vars:
 | `APOLLO_API_KEY` | Yes | Must be a **MASTER** key |
 | `APOLLO_MCP_CONFIG` | No | Override config.yaml path |
 | `APOLLO_MCP_TIMEOUT` | No | HTTP timeout in seconds (default 30) |
+| `APOLLO_AUDIT_LOG_PATH` | No | Path to a markdown file where destructive writes (template_update, sequence_create, step_create, mailbox_update_cap) append before/after diffs. Required for reversibility on the destructive-write tools. |
 
 ## Install
 
