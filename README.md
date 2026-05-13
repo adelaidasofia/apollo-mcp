@@ -94,12 +94,20 @@ Env vars:
 
 ## Install
 
+Open Claude Code, paste:
+
+    /plugin marketplace add adelaidasofia/apollo-mcp
+    /plugin install apollo-mcp@apollo-mcp
+
+Then set `APOLLO_API_KEY` (must be a master key) in your environment and restart Claude Code.
+
+<details>
+<summary>Legacy install</summary>
+
 ```bash
 pip3 install -r requirements.txt
 python3 -c "import server; print('OK')"
 ```
-
-## Register in Claude Code
 
 Add to your `.mcp.json`:
 
@@ -118,6 +126,8 @@ Add to your `.mcp.json`:
 ```
 
 Restart Claude Code after editing `.mcp.json`.
+
+</details>
 
 ## Known gotchas
 

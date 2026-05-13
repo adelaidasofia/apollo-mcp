@@ -1,0 +1,15 @@
+{
+  "$schema": "https://code.claude.com/schemas/marketplace.json",
+  "name": "apollo-mcp",
+  "owner": {
+    "name": "Mycelium AI",
+    "url": "https://myceliumai.co"
+  },
+  "plugins": [
+    {
+      "name": "apollo-mcp",
+      "source": "./",
+      "description": "FastMCP server exposing the full operational surface of the Apollo.io REST API. 27 tools covering sequences, campaign health, mailbox warmup, people/org enrichment, CRM contacts, tasks, labels, credit tracking, and programmatic template/sequence/mailbox-cap editing with audit logging."
+    }
+  ]
+}

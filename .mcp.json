@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "apollo": {
+      "command": "python3",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/server.py"],
+      "env": {
+        "APOLLO_API_KEY": "${APOLLO_API_KEY}"
+      }
+    }
+  }
+}
