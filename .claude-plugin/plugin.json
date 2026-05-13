@@ -1,0 +1,9 @@
+{
+  "name": "apollo-mcp",
+  "description": "FastMCP server exposing the full operational surface of the Apollo.io REST API. 27 tools covering sequences, campaign health, mailbox warmup, people/org enrichment, CRM contacts, tasks, labels, credit tracking, and programmatic template/sequence/mailbox-cap editing with audit logging.",
+  "version": "1.0.0",
+  "author": {
+    "name": "Mycelium AI",
+    "url": "https://myceliumai.co"
+  }
+}
