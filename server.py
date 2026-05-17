@@ -345,12 +345,52 @@ async def apollo_sequence_remove_contacts(sequence_id: str, contact_ids: list[st
 
 @mcp.tool
 async def apollo_sequence_set_active(sequence_id: str, active: bool) -> dict:
-    """Activate or pause a sequence (active=True to activate, False to pause)."""
-    return await _request(
-        "PUT",
+    """Activate or pause a sequence (active=True to activate, False to pause).
+
+    Uses PATCH + flat body, matching the working pattern in
+    apollo_template_update and apollo_mailbox_update_cap. The prior
+    PUT + nested-wrap pattern silently no-op'd in production — the same
+    antipattern that apollo_template_update's own comments document for
+    /emailer_templates.
+
+    Post-write verify: re-fetches the campaign after the PATCH and compares
+    the active flag. Surfaces a _warning if Apollo accepted the request but
+    didn't apply the change (which may indicate a separate UI-only
+    activation constraint for cold-outreach campaigns).
+    """
+    pre = await _request("GET", f"/emailer_campaigns/{sequence_id}")
+    if "error" in pre:
+        return {"error": "Pre-update snapshot failed", "detail": pre}
+    pre_active = (pre.get("emailer_campaign") or pre).get("active")
+
+    result = await _request(
+        "PATCH",
         f"/emailer_campaigns/{sequence_id}",
-        body={"emailer_campaign": {"active": active}},
+        body={"active": active},
     )
+    if "error" in result:
+        return {"error": "Update failed", "detail": result}
+
+    # Post-write verify (mirrors apollo_template_update's verification step).
+    verify = await _request("GET", f"/emailer_campaigns/{sequence_id}")
+    verified_active = (verify.get("emailer_campaign") or {}).get("active")
+    write_landed = verified_active == active
+
+    response: dict = {
+        "sequence_id": sequence_id,
+        "requested_active": active,
+        "before_active": pre_active,
+        "after_active": verified_active,
+        "updated": write_landed,
+        "silent_no_op": not write_landed,
+    }
+    if not write_landed:
+        response["_warning"] = (
+            f"Requested active={active} but Apollo returned active={verified_active}. "
+            "Apollo may enforce UI-only activation for cold-outreach campaigns "
+            "(anti-abuse). Flip the active toggle in the Apollo UI as a workaround."
+        )
+    return response
 
 
 # ─── Messages (the underlying send/open/reply log) ────────────────────────
