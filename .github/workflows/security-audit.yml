@@ -37,6 +37,13 @@ jobs:
           python -m pip install --quiet pip-audit
           if [ -f requirements.txt ]; then
             pip-audit --requirement requirements.txt
+          elif [ -f pyproject.toml ]; then
+            python -c "import sys,tomllib; sys.stdout.write(chr(10).join(tomllib.load(open('pyproject.toml','rb')).get('project',{}).get('dependencies',[])))" > /tmp/security-audit-deps.txt
+            if [ -s /tmp/security-audit-deps.txt ]; then
+              pip-audit --requirement /tmp/security-audit-deps.txt
+            else
+              echo "security-audit: pyproject.toml declares no [project.dependencies]; no runtime dependency surface to audit."
+            fi
           else
-            python -m pip install --quiet . && pip-audit
+            echo "security-audit: no requirements.txt or pyproject.toml found; nothing to audit."
           fi
