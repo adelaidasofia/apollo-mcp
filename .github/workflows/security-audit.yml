@@ -1,0 +1,42 @@
+name: security-audit
+# Auto-managed by ~/.local/bin/gh-harden-repos.sh. Do not hand-edit.
+#
+# Blocks CI on known dependency advisories so a vulnerable package
+# cannot land unnoticed (the failure mode behind Dependabot alerts
+# sitting in a dashboard nobody reads). The weekly run catches
+# advisories newly disclosed against already-pinned deps, where no
+# commit is needed for the repo to become vulnerable.
+#
+# npm: threshold is `high`, so high and critical fail the build while
+# moderate and low stay with Dependabot PRs and the gate is signal,
+# not noise.
+# pip: a genuinely unfixable advisory can be waived with
+# `--ignore-vuln <GHSA-id>` and a justifying comment, never by deleting
+# this gate.
+#
+# No untrusted input is interpolated into any run: step.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '0 13 * * 1'   # Mondays 13:00 UTC
+  workflow_dispatch:
+
+jobs:
+  pip-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: pip-audit (block on known advisories)
+        run: |
+          python -m pip install --quiet pip-audit
+          if [ -f requirements.txt ]; then
+            pip-audit --requirement requirements.txt
+          else
+            python -m pip install --quiet . && pip-audit
+          fi
