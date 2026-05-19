@@ -1,0 +1,78 @@
+name: personal-pii-scrub
+# Auto-managed by ~/.local/bin/gh-harden-repos.sh (Layer 8). Do not hand-edit.
+#
+# Blocks PRs / pushes that leak vault paths or personal-name tokens into
+# public-repo source. Word-boundary regex per ~/.claude/CLAUDE.md global
+# personal-data scrub rule. Public repos only (private repos skip this).
+#
+# Reimplemented from BuilderIO/agent-native scripts/guard-* CI guard
+# pattern (cherry-pick A, codified 2026-05-19). The session-level
+# PreToolUse hooks in ~/.claude/hooks/ catch this at write-time during
+# Claude Code sessions; this workflow catches it for ANY commit path
+# (gh CLI, direct git, contractor co-author, future agent).
+#
+# Patterns kept in lockstep with CLAUDE.md "Personal-data scrub" section.
+# Adding/removing patterns: edit ~/.claude/CLAUDE.md AND this template
+# (in ⚙️ Meta/scripts/gh-harden-repos.sh) in the same commit, then let
+# the daily run propagate.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '0 12 * * 1'   # Mondays 12:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scrub:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Personal-name + vault-path scrub
+        run: |
+          set -e
+          # Word-boundary patterns from ~/.claude/CLAUDE.md. NOT case-
+          # insensitive: 'wOnder' (34-floor framework #32) contains 'Onde'
+          # but \bOnde\b skips it (CLAUDE.md false-positive trap).
+          PATTERNS=(
+            '\bAdelaida\b'
+            '\bDiaz-Roa\b'
+            '\bSergio Perez\b'
+            '\bSneider Alfonso\b'
+            '\bAccenture\b'
+            '\bCentre415\b'
+            '\bvinitos\b'
+            '/Users/adelaidadiaz-roa/'
+            'Desktop/Adelaida Notes'
+            'adelaida@'
+            'tech@onde'
+            'High-Rise'
+            'After the Shock'
+          )
+          fail=0
+          # Scan source files. Exclude markdown docs (README, CHANGELOG,
+          # docs/), vendored deps, lock files, and the workflows themselves
+          # (this file MENTIONS the patterns by definition).
+          for p in "${PATTERNS[@]}"; do
+            matches=$(git grep -nE "$p" \
+              -- ':!README*' ':!CHANGELOG*' ':!docs/' ':!*.md' \
+              ':!vendor/' ':!node_modules/' ':!*.lock' \
+              ':!package-lock.json' ':!pnpm-lock.yaml' \
+              ':!.github/workflows/personal-pii-scrub.yml' 2>/dev/null || true)
+            if [ -n "$matches" ]; then
+              echo "::error::personal-data pattern leaked into source: $p"
+              echo "$matches"
+              fail=1
+            fi
+          done
+          if [ $fail -eq 1 ]; then
+            echo "::error::Personal-data scrub failed. See CLAUDE.md 'Personal-data scrub' section + repo-evaluation.md cherry-pick A."
+            exit 1
+          fi
+          echo "Personal-data scrub clean."
