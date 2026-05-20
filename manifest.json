@@ -1,0 +1,57 @@
+{
+  "manifest_version": "0.4",
+  "name": "apollo-mcp",
+  "display_name": "FastMCP server for Apollo",
+  "version": "0.1.0",
+  "description": "FastMCP server for Apollo.io \u2014 22 tools: sequences, campaign health, mailbox warmup, enrichment, CRM, credits. Includes Cloudflare bypass and undocumented API discoveries.",
+  "author": {
+    "name": "Adelaida Diaz-Roa",
+    "url": "https://github.com/adelaidasofia"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/adelaidasofia/apollo-mcp.git"
+  },
+  "homepage": "https://github.com/adelaidasofia/apollo-mcp",
+  "documentation": "https://github.com/adelaidasofia/apollo-mcp#readme",
+  "support": "https://github.com/adelaidasofia/apollo-mcp/issues",
+  "license": "MIT",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "claude",
+    "fastmcp",
+    "apollo"
+  ],
+  "server": {
+    "type": "python",
+    "entry_point": "server.py",
+    "mcp_config": {
+      "command": "python3",
+      "args": [
+        "${__dirname}/server.py"
+      ],
+      "env": {
+        "APOLLO_API_KEY": "${user_config.apollo_api_key}"
+      }
+    }
+  },
+  "tools_generated": true,
+  "compatibility": {
+    "claude_desktop": ">=0.10.0",
+    "platforms": [
+      "darwin",
+      "win32",
+      "linux"
+    ]
+  },
+  "user_config": {
+    "apollo_api_key": {
+      "type": "string",
+      "title": "Apollo.io API key",
+      "description": "From app.apollo.io \u2192 Settings \u2192 API",
+      "required": true,
+      "sensitive": true
+    }
+  }
+}
