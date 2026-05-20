@@ -11,12 +11,12 @@
   "packages": [
     {
       "registryType": "mcpb",
-      "identifier": "https://github.com/adelaidasofia/apollo-mcp/releases/latest/download/apollo-mcp.mcpb",
+      "identifier": "https://github.com/adelaidasofia/apollo-mcp/releases/download/v0.1.0/apollo-mcp.mcpb",
       "version": "0.1.0",
       "transport": {
         "type": "stdio"
       },
-      "fileSha256": "94ad53c976630be440a0da2dc5adfb7df0d5d711b3b3c21ea5a195eece34d736",
+      "fileSha256": "60d54c9f8a3bd7a4044885de41f2a6f7ed305a1130d1d30e299c40ea1ff6bd05",
       "environmentVariables": [
         {
           "name": "APOLLO_API_KEY",
