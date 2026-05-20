@@ -16,6 +16,7 @@
       "transport": {
         "type": "stdio"
       },
+      "fileSha256": "94ad53c976630be440a0da2dc5adfb7df0d5d711b3b3c21ea5a195eece34d736",
       "environmentVariables": [
         {
           "name": "APOLLO_API_KEY",
