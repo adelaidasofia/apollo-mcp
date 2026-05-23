@@ -1,5 +1,20 @@
 # Apollo.io MCP Server
 
+
+<!-- mycelium-badges:start -->
+
+<p>
+  <a href="https://github.com/adelaidasofia/apollo-mcp/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/adelaidasofia/apollo-mcp?color=blue"></a>
+  <a href="https://github.com/adelaidasofia/apollo-mcp/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/adelaidasofia/apollo-mcp?color=eab308"></a>
+  <a href="https://github.com/adelaidasofia/apollo-mcp/commits/main"><img alt="Last commit" src="https://img.shields.io/github/last-commit/adelaidasofia/apollo-mcp"></a>
+  <a href="https://github.com/adelaidasofia/apollo-mcp/issues"><img alt="Open issues" src="https://img.shields.io/github/issues/adelaidasofia/apollo-mcp"></a>
+  <a href="https://pypi.org/project/adelaidasofia-apollo-mcp/"><img alt="PyPI version" src="https://img.shields.io/pypi/v/adelaidasofia-apollo-mcp?color=blue&label=pypi"></a>
+  <a href="https://pypi.org/project/adelaidasofia-apollo-mcp/"><img alt="PyPI downloads" src="https://img.shields.io/pypi/dm/adelaidasofia-apollo-mcp?color=blue&label=downloads"></a>
+  <a href="https://myceliumai.co"><img alt="Built by Mycelium AI" src="https://img.shields.io/badge/built_by-Mycelium_AI-15B89A"></a>
+</p>
+
+<!-- mycelium-badges:end -->
+
 FastMCP server exposing the full operational surface of the Apollo.io REST API to Claude Code. 27 tools covering sequences, campaign health, mailbox warmup, people/org enrichment, CRM contacts, tasks, labels, credit tracking, AND programmatic template/sequence/mailbox-cap editing with audit logging.
 
 Most existing Apollo MCPs only expose people search and enrichment. This one is built for teams running outbound at scale — daily health digests, sequence management, mailbox deliverability monitoring, programmatic contact enrollment, and end-to-end sequence authoring without touching the Apollo UI.
