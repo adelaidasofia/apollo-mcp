@@ -23,10 +23,12 @@ import sys
 import time
 from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import urlparse
 
 import httpx
 import yaml
 from fastmcp import FastMCP
+from mycelium_security import UnsafeURL, assert_public_ip, sanitize_or_raise
 
 # ---------------------------------------------------------------------------
 # Config
@@ -86,6 +88,17 @@ async def _request(
             return cached
 
     url = f"{API_BASE.rstrip('/')}{path}"
+
+    # SSRF hardening (MYC-101): sanitize URL chars/scheme, assert public IP,
+    # block 3xx redirects. APOLLO_API_BASE (via config.yaml) is the SSRF
+    # surface; a malicious override could let any tenant path reach internal IPs.
+    try:
+        safe_url = sanitize_or_raise(url)
+        host = urlparse(safe_url).hostname or ""
+        assert_public_ip(host)
+    except UnsafeURL as exc:
+        return {"error": f"refused (SSRF): {exc}"}
+
     headers = {
         "X-Api-Key": API_KEY,
         "Accept": "application/json",
@@ -98,9 +111,9 @@ async def _request(
 
     for attempt in range(5):
         try:
-            async with httpx.AsyncClient(timeout=TIMEOUT_SEC) as client:
+            async with httpx.AsyncClient(timeout=TIMEOUT_SEC, follow_redirects=False) as client:
                 resp = await client.request(
-                    method, url, headers=headers, params=params, json=body
+                    method, safe_url, headers=headers, params=params, json=body
                 )
             if resp.status_code == 429:
                 delay = min(2 ** attempt + random.random(), 30)
