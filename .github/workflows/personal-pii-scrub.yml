@@ -62,6 +62,7 @@ jobs:
           for p in "${PATTERNS[@]}"; do
             matches=$(git grep -nE "$p" \
               -- ':!README*' ':!CHANGELOG*' ':!docs/' ':!*.md' \
+              ':!LICENSE*' ':!COPYING*' ':!NOTICE*' \
               ':!vendor/' ':!node_modules/' ':!*.lock' \
               ':!package-lock.json' ':!pnpm-lock.yaml' \
               ':!.github/workflows/personal-pii-scrub.yml' 2>/dev/null || true)
