@@ -31,15 +31,18 @@ jobs:
   scrub:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
         with:
           fetch-depth: 0
-      - name: Personal-name + vault-path scrub
+      - name: Personal-name + vault-path scrub (source files)
         run: |
           set -e
           # Word-boundary patterns from ~/.claude/CLAUDE.md. NOT case-
           # insensitive: 'wOnder' (34-floor framework #32) contains 'Onde'
           # but \bOnde\b skips it (CLAUDE.md false-positive trap).
+          # If you edit this array, also edit the IDENTICAL array in the
+          # next step ("...bundled .mcpb / .zip archives") — both scrubs
+          # must stay in lockstep.
           PATTERNS=(
             '\bAdelaida\b'
             '\bDiaz-Roa\b'
@@ -73,7 +76,76 @@ jobs:
             fi
           done
           if [ $fail -eq 1 ]; then
-            echo "::error::Personal-data scrub failed. See CLAUDE.md 'Personal-data scrub' section + repo-evaluation.md cherry-pick A."
+            echo "::error::Personal-data scrub failed (source files). See CLAUDE.md 'Personal-data scrub' section + repo-evaluation.md cherry-pick A."
             exit 1
           fi
-          echo "Personal-data scrub clean."
+          echo "Source-file scrub clean."
+      - name: Personal-name + vault-path scrub (bundled .mcpb / .zip archives)
+        # .mcpb is just .zip with a different extension; both unzip the
+        # same way. Closes bug class PERSONAL-DATA-IN-BUNDLED-ARCHIVE-
+        # UNCAUGHT (concretely: substack-mcp v0.1.0 .mcpb leaked
+        # .claude/settings.local.json with vault paths; v0.2.0 was rebuilt
+        # clean, but until this step landed the workflow couldn't catch
+        # the next regression).
+        run: |
+          set -e
+          ARCHIVES=$(git ls-files '*.mcpb' '*.zip' 2>/dev/null || true)
+          if [ -z "$ARCHIVES" ]; then
+            echo "No tracked .mcpb / .zip archives. Skipping archive scan."
+            exit 0
+          fi
+          # IDENTICAL pattern list to the source-files step above. Keep
+          # them in lockstep — if you edit one, edit the other.
+          PATTERNS=(
+            '\bAdelaida\b'
+            '\bDiaz-Roa\b'
+            '\bSergio Perez\b'
+            '\bSneider Alfonso\b'
+            '\bAccenture\b'
+            '\bCentre415\b'
+            '\bvinitos\b'
+            '/Users/adelaidadiaz-roa/'
+            'Desktop/Adelaida Notes'
+            'adelaida@'
+            'tech@onde'
+            'High-Rise'
+            'After the Shock'
+          )
+          fail=0
+          while IFS= read -r archive; do
+            [ -z "$archive" ] && continue
+            echo "Scanning archive: $archive"
+            tmp=$(mktemp -d)
+            if ! unzip -q -o "$archive" -d "$tmp" 2>/dev/null; then
+              echo "::error::failed to unzip $archive — treating as scrub failure"
+              fail=1
+              rm -rf "$tmp"
+              continue
+            fi
+            # Same exclusions as the source-file step (LICENSE/COPYING/
+            # NOTICE legitimately attribute the author; README/CHANGELOG/
+            # *.md are docs; vendored deps + lock files don't count).
+            # -a forces grep to treat binary-detected files as text so
+            # extracted scripts with non-UTF8 bytes still get scanned.
+            for p in "${PATTERNS[@]}"; do
+              matches=$(grep -rnaE \
+                --exclude='README*' --exclude='CHANGELOG*' --exclude='*.md' \
+                --exclude='LICENSE*' --exclude='COPYING*' --exclude='NOTICE*' \
+                --exclude='*.lock' --exclude='package-lock.json' \
+                --exclude='pnpm-lock.yaml' \
+                --exclude-dir='vendor' --exclude-dir='node_modules' \
+                --exclude-dir='docs' \
+                "$p" "$tmp" 2>/dev/null || true)
+              if [ -n "$matches" ]; then
+                echo "::error::personal-data pattern leaked into $archive: $p"
+                echo "$matches" | sed "s|^$tmp/|$archive::|"
+                fail=1
+              fi
+            done
+            rm -rf "$tmp"
+          done <<< "$ARCHIVES"
+          if [ $fail -eq 1 ]; then
+            echo "::error::Archive scrub failed. .mcpb / .zip bundle contained personal-data patterns. See CLAUDE.md 'Personal-data scrub' section."
+            exit 1
+          fi
+          echo "Archive scrub clean."
