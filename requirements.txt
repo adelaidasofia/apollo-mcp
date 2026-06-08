@@ -1,4 +1,4 @@
-fastmcp>=3.3.1
+fastmcp>=3.4.2
 httpx>=0.28.1
 pyyaml>=6.0.3
 # SSRF hardening for outbound Apollo API fetch (MYC-101).
