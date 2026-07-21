@@ -2,4 +2,4 @@ fastmcp>=3.4.2
 httpx>=0.28.1
 pyyaml>=6.0.3
 # SSRF hardening for outbound Apollo API fetch (MYC-101).
-mycelium-security @ git+https://github.com/adelaidasofia/mycelium-security.git@v0.1.0
+mycelium-security @ git+https://github.com/adelaidasofia/mycelium-security.git@v0.1.1
