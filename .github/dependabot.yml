@@ -1,10 +1,15 @@
 version: 2
-# Auto-managed by ~/.local/bin/gh-harden-repos.sh. Do not hand-edit.
+# Managed by mycelium-vault scripts/sync-dependabot-automerge.py. Edit the
+# template (scripts/dependabot-templates/) and re-sync; do not hand-edit here.
+# cooldown: a release must be 7 days old before dependabot proposes it, so a
+# freshly published (possibly compromised) version never lands the same week.
 updates:
   - package-ecosystem: pip
     directory: "/"
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 10
     groups:
       patch-updates:
@@ -15,6 +20,8 @@ updates:
     directory: "/"
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 10
     groups:
       patch-updates:
