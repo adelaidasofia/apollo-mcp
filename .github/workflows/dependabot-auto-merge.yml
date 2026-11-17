@@ -189,14 +189,30 @@ jobs:
               name, kind = dep.get("dependency-name", "?"), dep.get("update-type")
               if kind is None:
                   # Range bumps ("update X requirement from >=A to >=B") carry no
-                  # update-type: classify from the verified head commit's subject
-                  # (the PR title can be edited by anyone with triage), one
-                  # dependency only.
-                  subject = commits[-1]["commit"]["message"].splitlines()[0]
-                  m = re.search(r"(?:update|bump) (\S+) requirement from (.+) to (.+?)(?: in \S+)?$", subject, re.I)
+                  # update-type and dependabot's commit subject drops the range,
+                  # so read it from the title, one dependency only. The title can
+                  # be edited, so both sides must also show on a removed and an
+                  # added line of the PR's own diff (verified dependabot commits).
+                  m = re.search(r"(?:update|bump) (\S+) requirement from (.+) to (.+?)(?: in \S+)?$", pr["title"], re.I)
                   if len(deps) != 1 or not m or m.group(1) != name:
                       stop(f"{name}: no update-type and the title is not a single requirement bump")
-                  level = range_level(m.group(2), m.group(3))
+                  old_req, new_req = m.group(2), m.group(3)
+                  lines = [l for f in pages(f"repos/{REPO}/pulls/{PR}/files") for l in (f.get("patch") or "").splitlines()]
+                  def shown(sign, text):
+                      # The requirement must follow the dependency's own name directly
+                      # (pkg>=1, "pkg": "^1", pkg = ">=1") and be the whole requirement:
+                      # only a quote, a comment or the line end may come after it.
+                      at = (r"(?<![\w.@/-])" + re.escape(name) + r"[\"']?\s*[:=]?\s*[\"']?"
+                            + re.escape(text) + r"\s*(?:[\"']|#|$)")
+                      return any(l.startswith(sign) and re.search(at, l[1:]) for l in lines)
+                  if not (shown("-", old_req) and shown("+", new_req)):
+                      stop(f"{name}: the PR diff does not show {old_req!r} -> {new_req!r}")
+                  # The new lower bound must be the version the verified trailer names.
+                  got, want = lower_bound(new_req), lower_bound(dep.get("dependency-version") or "")
+                  pad = lambda v: v + [0] * (3 - len(v))
+                  if not got or not want or (pad(got[0]), got[1]) != (pad(want[0]), want[1]):
+                      stop(f"{name}: {new_req!r} is not the trailer's version {dep.get('dependency-version')!r}")
+                  level = range_level(old_req, new_req)
               else:
                   level = LEVELS.get(kind, f"unknown ({kind})")
                   if level in ("patch", "minor"):
