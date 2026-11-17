@@ -1,33 +1,182 @@
 name: dependabot-auto-merge
-# Auto-managed by ~/.local/bin/gh-harden-repos.sh. Do not hand-edit.
-# Tier: AUTO_PATCH
+# Managed by mycelium-vault scripts/sync-dependabot-automerge.py. Edit the
+# template (scripts/dependabot-templates/) and re-sync; do not hand-edit here.
+# Dependabot patch and minor bumps merge only after every other check on the
+# PR head has passed. Majors, unknown bumps and anything not purely from
+# dependabot stay for a human. mycelium-hq/tickets#6753
 on:
   pull_request:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Dependabot PR number to evaluate
+        required: true
+        type: string
+      dry_run:
+        description: Print the decision and merge nothing
+        required: false
+        type: boolean
+        default: true
 concurrency:
   # A superseded push to the same PR cancels the in-flight run instead of
   # billing it to completion. Scoped to pull_request ONLY: push / schedule runs
   # are never cancelled (and if a merge queue is ever wired here, cancelling a
   # queued group would deadlock it). Added by MYC-3180; moved into the
   # generator by MYC-3412 so regeneration stops silently reverting it.
-  group: dependabot-auto-merge-${{ github.event.pull_request.number || github.ref }}
+  # Manual runs group by their PR number so several can run side by side.
+  group: dependabot-auto-merge-${{ github.event.pull_request.number || inputs.pr || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 permissions:
-  pull-requests: write
   contents: write
+  pull-requests: write
+  checks: read
+  statuses: read
 jobs:
-  auto-merge:
+  dependabot-auto-merge:
+    # The script ignores check runs with this exact name (its own, including
+    # cancelled earlier runs), so keep the two in step.
+    name: dependabot-auto-merge
     runs-on: ubuntu-latest
-    if: github.actor == 'dependabot[bot]'
+    timeout-minutes: 40
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.user.login == 'dependabot[bot]'
     steps:
-      - name: Fetch Dependabot metadata
-        id: meta
-        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-      - name: Enable auto-merge on qualifying updates
-        if: ${{ steps.meta.outputs.update-type == 'version-update:semver-patch' }}
-        run: gh pr merge --auto --squash "$PR_URL"
+      - name: Merge patch and minor bumps after every other check passes
         env:
-          PR_URL: ${{ github.event.pull_request.html_url }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number || inputs.pr }}
+          DRY_RUN: ${{ inputs.dry_run && 'true' || 'false' }}
+          SELF_CHECK: dependabot-auto-merge
+        run: |
+          python3 - <<'PY'
+          import json, os, re, subprocess, sys, time
+
+          REPO, PR, SELF = os.environ["REPO"], os.environ["PR"], os.environ["SELF_CHECK"]
+          DRY = os.environ.get("DRY_RUN") == "true"
+          SETTLE = int(os.environ.get("SETTLE_SECONDS", "90"))
+          POLL = int(os.environ.get("POLL_SECONDS", "30"))
+          TIMEOUT = int(os.environ.get("TIMEOUT_SECONDS", "1800"))
+          BOT = "dependabot[bot]"
+          GREEN = {"success", "skipped", "neutral"}
+          LEVELS = {"version-update:semver-patch": "patch",
+                    "version-update:semver-minor": "minor",
+                    "version-update:semver-major": "major"}
+
+          def gh(*args):
+              return subprocess.run(["gh", *args], check=True, capture_output=True, text=True).stdout
+
+          def api(path):
+              return json.loads(gh("api", path))
+
+          def pages(path, key=None):
+              out, page = [], 1
+              while True:
+                  data = api(f"{path}{'&' if '?' in path else '?'}per_page=100&page={page}")
+                  items = data[key] if key else data
+                  out += items
+                  if len(items) < 100:
+                      return out
+                  page += 1
+
+          def stop(reason):
+              print(f"NO MERGE: {reason}")
+              sys.exit(0)
+
+          def nums(text):
+              return [[int(p) for p in v.split(".")] for v in re.findall(r"\d+(?:\.\d+)*", text)]
+
+          def bump(old, new):
+              old, new = (old + [0, 0, 0])[:3], (new + [0, 0, 0])[:3]
+              if new < old:
+                  return "downgrade"
+              return "major" if new[0] != old[0] else "minor" if new[1] != old[1] else "patch"
+
+          if not re.fullmatch(r"[1-9][0-9]*", PR):
+              stop(f"PR must be a number, got {PR!r}")
+          pr = api(f"repos/{REPO}/pulls/{PR}")
+          url, sha = pr["html_url"], pr["head"]["sha"]
+          print(f"PR {url} head {sha}: {pr['title']}")
+          if pr["user"]["login"] != BOT:
+              stop(f"author is {pr['user']['login']}, not {BOT}")
+          if (pr["head"].get("repo") or {}).get("full_name") != REPO:
+              stop("head branch is not in this repository (fork or deleted)")
+          if pr["base"]["ref"] != pr["base"]["repo"]["default_branch"]:
+              stop(f"base is {pr['base']['ref']}, not the default branch")
+          if pr["draft"]:
+              stop("PR is a draft")
+          if pr["state"] != "open" or pr.get("merged"):
+              if not DRY:
+                  stop(f"PR is {'merged' if pr.get('merged') else pr['state']}")
+              print(f"note: PR is {'merged' if pr.get('merged') else pr['state']}; evaluating anyway (dry run)")
+
+          commits = pages(f"repos/{REPO}/pulls/{PR}/commits")
+          if not commits or commits[-1]["sha"] != sha:
+              stop("PR commit list does not end at the head commit")
+          for c in commits:
+              if (c.get("author") or {}).get("login") != BOT or not c["commit"]["verification"]["verified"]:
+                  stop(f"commit {c['sha'][:12]} is not a verified commit by {BOT}")
+
+          meta = re.search(r"^---\nupdated-dependencies:\n(.*?)^\.\.\.$", commits[-1]["commit"]["message"], re.S | re.M)
+          if not meta:
+              stop("head commit has no dependabot updated-dependencies trailer")
+          deps = []
+          for line in meta.group(1).splitlines():
+              if line.startswith("- "):
+                  deps.append({})
+                  line = line[2:]
+              key, _, value = line.strip().partition(":")
+              if deps and key:
+                  deps[-1][key.strip()] = value.strip().strip("'\"")
+          if not deps:
+              stop("dependabot trailer lists no dependencies")
+
+          found = []
+          for dep in deps:
+              name, kind = dep.get("dependency-name", "?"), dep.get("update-type")
+              if kind is None:
+                  # Range bumps ("update X requirement from >=A to >=B") carry no
+                  # update-type: classify from the title, one dependency only.
+                  m = re.search(r"(?:update|bump) (\S+) requirement from (.+) to (.+?)(?: in \S+)?$", pr["title"])
+                  if len(deps) != 1 or not m or m.group(1) != name:
+                      stop(f"{name}: no update-type and the title is not a single requirement bump")
+                  old, new = nums(m.group(2)), nums(m.group(3))
+                  if not old or len(old) != len(new):
+                      stop(f"{name}: cannot compare requirement {m.group(2)!r} with {m.group(3)!r}")
+                  order = ["patch", "minor", "major", "downgrade"]
+                  level = max((bump(a, b) for a, b in zip(old, new)), key=order.index)
+              else:
+                  level = LEVELS.get(kind, f"unknown ({kind})")
+              found.append(f"{name}={level}")
+              if level not in ("patch", "minor"):
+                  stop(f"{name} is a {level} update; leaving it for a human")
+          print("bumps: " + ", ".join(found))
+
+          print(f"waiting {SETTLE}s for other checks to register")
+          time.sleep(SETTLE)
+          deadline, streak = time.time() + TIMEOUT, 0
+          while True:
+              runs = [r for r in pages(f"repos/{REPO}/commits/{sha}/check-runs", "check_runs") if r["name"] != SELF]
+              statuses = api(f"repos/{REPO}/commits/{sha}/status")["statuses"]
+              failed = [f"{r['name']}={r['conclusion']}" for r in runs if r["status"] == "completed" and r["conclusion"] not in GREEN]
+              failed += [f"{s['context']}={s['state']}" for s in statuses if s["state"] in ("failure", "error")]
+              pending = [r["name"] for r in runs if r["status"] != "completed"]
+              pending += [s["context"] for s in statuses if s["state"] == "pending"]
+              if failed:
+                  stop("not every check passed: " + ", ".join(failed))
+              if runs or statuses:
+                  streak = streak + 1 if not pending else 0
+              print(f"{len(runs)} check runs, {len(statuses)} statuses, pending: {', '.join(pending) or 'none'}")
+              if streak >= 2:
+                  break
+              if time.time() + POLL > deadline:
+                  stop(f"timed out after {TIMEOUT // 60} min; still pending: {', '.join(pending) or 'no other checks ever appeared'}")
+              time.sleep(POLL)
+          print("every other check passed: " + ", ".join(sorted({r["name"] for r in runs} | {s["context"] for s in statuses})))
+
+          if DRY:
+              print(f"DRY RUN: would merge {url} (squash, head {sha})")
+              sys.exit(0)
+          print(gh("pr", "merge", url, "--squash", "--match-head-commit", sha))
+          print(f"MERGED {url}")
+          PY
