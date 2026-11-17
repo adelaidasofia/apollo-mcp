@@ -83,14 +83,67 @@ jobs:
               print(f"NO MERGE: {reason}")
               sys.exit(0)
 
-          def nums(text):
-              return [[int(p) for p in v.split(".")] for v in re.findall(r"\d+(?:\.\d+)*", text)]
+          def lower_bound(req):
+              """The one lower bound of a requirement as (release numbers, tail), or None.
+              Returns (numbers, tail, operator, sorted upper bounds (<, <=, !=)). Tails such as .post1, .dev2, rc1,
+              a1, b1 are kept apart from the release numbers. Anything else (no lower
+              bound, two of them, ||, spaces, wildcards) cannot be read."""
+              found, caps = [], []
+              for part in req.strip().split(","):
+                  part = part.strip()
+                  if part.startswith(("<", "!=")):
+                      caps.append(part)
+                      continue
+                  m = re.fullmatch(r"(>=|~=|==|>|\^|~)?v?(\d+(?:\.\d+)*)((?:[.-]?[A-Za-z][A-Za-z0-9]*)*)", part)
+                  if not m:
+                      return None
+                  found.append(([int(n) for n in m.group(2).split(".")], m.group(3).lower(), m.group(1) or ""))
+              return (*found[0], sorted(caps)) if len(found) == 1 else None
 
-          def bump(old, new):
-              old, new = (old + [0, 0, 0])[:3], (new + [0, 0, 0])[:3]
-              if new < old:
+          def zero_level(level, version):
+              """A patch or minor of a 0.x dependency is a major for 0.0.x, and a minor
+              of 0.x is a major too: under semver those may break. Uses the trailer's
+              new version (a patch or minor keeps the leading numbers); no readable
+              version means it stays for a human."""
+              m = re.fullmatch(r"v?(\d+)\.(\d+)\S*", version or "")
+              if not m:
+                  return f"unreadable dependency-version {version!r}"
+              if m.group(1) == "0" and (m.group(2) == "0" or level == "minor"):
+                  return f"major (0.x {level})"
+              return level
+
+          def post(tail):
+              """Post-release number of a tail: '' is 0, '.post2' is 2, anything else None."""
+              m = re.fullmatch(r"(?:[.-]?post(\d+))?", tail)
+              return int(m.group(1) or 0) if m else None
+
+          def range_level(old_req, new_req):
+              """patch, minor or major for a requirement bump, or the reason it stays for a human."""
+              old, new = lower_bound(old_req), lower_bound(new_req)
+              if not old or not new:
+                  return f"unreadable requirement {old_req!r} -> {new_req!r}"
+              (a, a_tail, a_op, a_caps), (b, b_tail, b_op, b_caps) = old, new
+              if a_op != b_op:  # ^1.0 to >=1.1 drops an implied cap
+                  return f"operator changed {a_op or 'none'} -> {b_op or 'none'}"
+              if a_caps and a_caps != b_caps:  # adding a cap only narrows the range
+                  return f"upper bound changed {a_caps} -> {b_caps}"
+              width = max(len(a), len(b), 3)
+              a, b = a + [0] * (width - len(a)), b + [0] * (width - len(b))
+              if b < a:
                   return "downgrade"
-              return "major" if new[0] != old[0] else "minor" if new[1] != old[1] else "patch"
+              if b > a:
+                  first = next(i for i in range(width) if a[i] != b[i])
+                  if a[0] == 0 and first <= 2 and a[1] == 0:
+                      return "major"  # 0.0.x: any bump may break
+                  if a[0] == 0 and first == 1:
+                      return "major"  # 0.x: a minor bump may break, as semver allows
+                  return ["major", "minor"][first] if first < 2 else "patch"
+              # Same release numbers: only a later post-release counts as a patch.
+              if post(a_tail) is None or post(b_tail) is None:
+                  return f"tail-only change {a_tail or 'none'} -> {b_tail or 'none'}"
+              if post(b_tail) > post(a_tail):
+                  return "patch"
+              return "downgrade" if post(b_tail) < post(a_tail) else "no change"
 
           if not re.fullmatch(r"[1-9][0-9]*", PR):
               stop(f"PR must be a number, got {PR!r}")
@@ -136,20 +189,21 @@ jobs:
               name, kind = dep.get("dependency-name", "?"), dep.get("update-type")
               if kind is None:
                   # Range bumps ("update X requirement from >=A to >=B") carry no
-                  # update-type: classify from the title, one dependency only.
-                  m = re.search(r"(?:update|bump) (\S+) requirement from (.+) to (.+?)(?: in \S+)?$", pr["title"])
+                  # update-type: classify from the verified head commit's subject
+                  # (the PR title can be edited by anyone with triage), one
+                  # dependency only.
+                  subject = commits[-1]["commit"]["message"].splitlines()[0]
+                  m = re.search(r"(?:update|bump) (\S+) requirement from (.+) to (.+?)(?: in \S+)?$", subject, re.I)
                   if len(deps) != 1 or not m or m.group(1) != name:
                       stop(f"{name}: no update-type and the title is not a single requirement bump")
-                  old, new = nums(m.group(2)), nums(m.group(3))
-                  if not old or len(old) != len(new):
-                      stop(f"{name}: cannot compare requirement {m.group(2)!r} with {m.group(3)!r}")
-                  order = ["patch", "minor", "major", "downgrade"]
-                  level = max((bump(a, b) for a, b in zip(old, new)), key=order.index)
+                  level = range_level(m.group(2), m.group(3))
               else:
                   level = LEVELS.get(kind, f"unknown ({kind})")
+                  if level in ("patch", "minor"):
+                      level = zero_level(level, dep.get("dependency-version"))
               found.append(f"{name}={level}")
               if level not in ("patch", "minor"):
-                  stop(f"{name} is a {level} update; leaving it for a human")
+                  stop(f"{name}: {level}; leaving it for a human")
           print("bumps: " + ", ".join(found))
 
           print(f"waiting {SETTLE}s for other checks to register")
